@@ -28,6 +28,13 @@ from astropy import stats
 from astropy.constants import si
 from astropy.io.registry import UnifiedReadWriteMethod
 
+try:
+    # astropy >= 6.0
+    from astropy.coordinates import angular_separation
+except ModuleNotFoundError:
+    # astropy < 6.0
+    from astropy.coordinates.angle_utilities import angular_separation
+
 import numpy as np
 
 from radio_beam import Beam, Beams
@@ -1453,7 +1460,6 @@ class BaseSpectralCube(BaseNDClass, MaskableArrayMixinClass,
         lat = np.radians(lat)
 
         # Find the dx and dy arrays
-        from astropy.coordinates.angle_utilities import angular_separation
         dx = angular_separation(lon[:, :-1], lat[:, :-1],
                                 lon[:, 1:], lat[:, :-1])
         dy = angular_separation(lon[:-1, :], lat[:-1, :],
@@ -1541,7 +1547,6 @@ class BaseSpectralCube(BaseNDClass, MaskableArrayMixinClass,
         lat = np.radians(lat)
 
         # Find the dx and dy arrays
-        from astropy.coordinates.angle_utilities import angular_separation
         dx = angular_separation(lon[:, :-1], lat[:, :-1],
                                 lon[:, 1:], lat[:, :-1])
 
