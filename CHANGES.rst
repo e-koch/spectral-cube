@@ -12,6 +12,10 @@
   non-equivalent units, e.g. a ``Jy/beam`` cube and a dimensionless
   (unitless) cube.  Additive operations still require equivalent units. #1011
 
+- ``pixels_per_beam`` now delegates to the ``radio_beam`` builtin
+  (``Beam.pixels_per_beam`` / ``Beams.pixels_per_beam``), requiring
+  ``radio-beam>=0.3.8``. (radio-astro-tools/radio_beam#109)
+
 0.6.5 (2023-12-05)
 ----------------------
 - Fixed issue with fix from #893 not getting included in the 0.6.4 tag

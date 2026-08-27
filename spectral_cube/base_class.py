@@ -4,7 +4,6 @@ import numpy as np
 import warnings
 import abc
 
-import astropy
 from astropy.io.fits import Card
 from radio_beam import Beam, Beams
 import dask.array as da
@@ -516,11 +515,7 @@ class MultiBeamMixinClass(object):
     @property
     @cached
     def pixels_per_beam(self):
-        pixels_per_beam = [(beam.sr /
-                (astropy.wcs.utils.proj_plane_pixel_area(self.wcs) *
-                 u.deg**2)).to(u.one).value for beam in self.beams]
-
-        return pixels_per_beam
+        return self.beams.pixels_per_beam(self.wcs)
 
     @property
     def unmasked_beams(self):
@@ -849,6 +844,4 @@ class BeamMixinClass(object):
     @property
     @cached
     def pixels_per_beam(self):
-        return (self.beam.sr /
-                (astropy.wcs.utils.proj_plane_pixel_area(self.wcs) *
-                 u.deg**2)).to(u.one).value
+        return self.beam.pixels_per_beam(self.wcs)
