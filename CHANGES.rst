@@ -12,6 +12,15 @@
   non-equivalent units, e.g. a ``Jy/beam`` cube and a dimensionless
   (unitless) cube.  Additive operations still require equivalent units. #1011
 
+- Fixed several cases where operations silently upcast float32 cubes to
+  float64, doubling their memory footprint: ``to()`` (unit conversion) on
+  ``SpectralCube``, ``VaryingResolutionSpectralCube``, and
+  ``LowerDimensionalObject``, and any operation built on
+  ``apply_function_parallel_spatial``/``apply_function_parallel_spectral``
+  (e.g. ``convolve_to``, ``spatial_smooth``, ``spectral_smooth``), which
+  always allocated a float64 output buffer regardless of the input dtype.
+  ``VaryingResolutionSpectralCube.convolve_to`` had the same issue in its
+  own output buffer allocation. #995
 - Fixed ``Projection.convolve_to`` (i.e. convolving a single cube slice/plane)
   silently omitting the ``Jy/beam`` scaling by the change in beam area that
   ``SpectralCube.convolve_to`` already applies, which could produce

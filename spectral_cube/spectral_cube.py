@@ -2604,12 +2604,24 @@ class BaseSpectralCube(BaseNDClass, MaskableArrayMixinClass,
         # special case: array in equivalencies
         # (I don't think this should have to be special cased, but I don't know
         # how to manipulate broadcasting rules any other way)
+        # NOTE: the hasattr/len check must run on the *uncast* factor: a bare
+        # scalar factor has no __len__, but wrapping it in np.array() first
+        # would turn it into a 0-d array, which has __len__ as a class
+        # attribute yet raises TypeError when len() is actually called on it.
         if hasattr(factor, '__len__') and len(factor) == len(self):
-            return self._new_cube_with(data=self._data*factor[:,None,None],
-                                       unit=unit)
+            # the unit conversion factor may be float64 by default, so if
+            # needed demote (or promote) it first to avoid a transient
+            # double-precision copy of the full cube (see #995)
+            factor = np.array(factor, dtype=self._data.dtype)
+            data = self._data*factor[:,None,None]
         else:
-            return self._new_cube_with(data=self._data*factor,
-                                       unit=unit)
+            factor = np.asarray(factor, dtype=self._data.dtype)
+            data = self._data*factor
+
+        # possibly redundant: coerce data back into its original dtype
+        data = data.astype(self._data.dtype, copy=False)
+
+        return self._new_cube_with(data=data, unit=unit)
 
 
     def find_lines(self, velocity_offset=None, velocity_convention=None,
@@ -2961,7 +2973,8 @@ class BaseSpectralCube(BaseNDClass, MaskableArrayMixinClass,
 
         if use_memmap:
             ntf = tempfile.NamedTemporaryFile(dir=memmap_dir)
-            outcube = np.memmap(ntf, mode='w+', shape=self.shape, dtype=float)
+            outcube = np.memmap(ntf, mode='w+', shape=self.shape,
+                                dtype=self._data.dtype)
         else:
             if self._is_huge and not self.allow_huge_operations:
                 raise ValueError("Applying a function without ``use_memmap`` "
@@ -2971,7 +2984,7 @@ class BaseSpectralCube(BaseNDClass, MaskableArrayMixinClass,
                                  "set ``use_memmap=True`` or set "
                                  "``cube.allow_huge_operations=True`` to "
                                  "override this restriction.")
-            outcube = np.empty(shape=self.shape, dtype=float)
+            outcube = np.empty(shape=self.shape, dtype=self._data.dtype)
 
         if num_cores == 1 and parallel:
             warnings.warn("parallel=True was specified but num_cores=1. "
@@ -3393,8 +3406,12 @@ class BaseSpectralCube(BaseNDClass, MaskableArrayMixinClass,
             return convolve(img, convolution_kernel, normalize_kernel=True,
                             **kwargs) * beam_ratio_factor
 
-        if convolve is convolution.convolve_fft and 'allow_huge' not in kwargs:
-            kwargs['allow_huge'] = self.allow_huge_operations
+        if convolve is convolution.convolve_fft:
+            if 'allow_huge' not in kwargs:
+                kwargs['allow_huge'] = self.allow_huge_operations
+            # avoid the implicit float64 promotion (and associated memory
+            # cost) that convolve_fft otherwise performs on float32 data
+            kwargs = cube_utils.convolve_fft_singleprecision_kwargs(self._data.dtype, kwargs)
 
         newcube = self.apply_function_parallel_spatial(convfunc,
                                                        **kwargs).with_beam(beam, raise_error_jybm=False)
@@ -4223,7 +4240,12 @@ class VaryingResolutionSpectralCube(BaseSpectralCube, MultiBeamMixinClass):
             pb = ProgressBar(self.shape[0], desc='Convolve: ')
             update_function = pb.update
 
-        newdata = np.empty(self.shape)
+        if convolve is convolution.convolve_fft:
+            # avoid the implicit float64 promotion (and associated memory
+            # cost) that convolve_fft otherwise performs on float32 data
+            kwargs = cube_utils.convolve_fft_singleprecision_kwargs(self._data.dtype, kwargs)
+
+        newdata = np.empty(self.shape, dtype=self._data.dtype)
         for ii,kernel in enumerate(convolution_kernels):
 
             # load each image from a slice to avoid loading whole cube into
@@ -4266,17 +4288,21 @@ class VaryingResolutionSpectralCube(BaseSpectralCube, MultiBeamMixinClass):
 
         # Create the tuple of unit conversions needed.
         factor = cube_utils.bunit_converters(self, unit, equivalencies=equivalencies)
-        factor = np.array(factor)
+        # the unit conversion factor may be float64 by default, so if needed demote (or promote) it first
+        factor = np.array(factor, dtype=self._data.dtype)
 
         # special case: array in equivalencies
         # (I don't think this should have to be special cased, but I don't know
         # how to manipulate broadcasting rules any other way)
         if hasattr(factor, '__len__') and len(factor) == len(self):
-            return self._new_cube_with(data=self._data*factor[:,None,None],
-                                       unit=unit)
+            data = self._data*factor[:,None,None]
         else:
-            return self._new_cube_with(data=self._data*factor,
-                                       unit=unit)
+            data = self._data*factor
+
+    # possibly redundant: coerce data back into its original dtype
+        data = data.astype(self._data.dtype, copy=False)
+
+        return self._new_cube_with(data=data, unit=unit)
 
     def mask_channels(self, goodchannels):
         """
