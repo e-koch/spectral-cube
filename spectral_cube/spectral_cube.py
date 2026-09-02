@@ -11,6 +11,7 @@ import itertools
 import copy
 import tempfile
 import textwrap
+import time
 import weakref
 from pathlib import PosixPath
 import dask.array as da
@@ -155,15 +156,26 @@ def parallel_docstring(func):
 
     return wrapper
 
-def _remove_tempfile_if_exists(path):
+def _remove_tempfile_if_exists(path, attempts=5, delay=0.1):
     """
     Best-effort removal of a memmap's backing temporary file once the
     array referencing it has been garbage collected.
+
+    On Windows, the OS can briefly hold on to a just-unmapped file even
+    after the owning Python object (and its memory mapping) has already
+    been deallocated, so an immediate ``os.remove`` can transiently fail
+    with a ``PermissionError``; retry a few times before giving up.
     """
-    try:
-        os.remove(path)
-    except OSError:
-        pass
+    for attempt in range(attempts):
+        try:
+            os.remove(path)
+            return
+        except FileNotFoundError:
+            return
+        except OSError:
+            if attempt == attempts - 1:
+                return
+            time.sleep(delay)
 
 
 def _apply_spectral_function(arguments, outcube, function, **kwargs):
