@@ -5,11 +5,13 @@ A class to represent a 3-d position-position-velocity spectral cube.
 import warnings
 from functools import wraps
 import operator
+import os
 import re
 import itertools
 import copy
 import tempfile
 import textwrap
+import weakref
 from pathlib import PosixPath
 import dask.array as da
 
@@ -152,6 +154,17 @@ def parallel_docstring(func):
         wrapper.__doc__ = textwrap.dedent(wrapper.__doc__) + _PARALLEL_DOC
 
     return wrapper
+
+def _remove_tempfile_if_exists(path):
+    """
+    Best-effort removal of a memmap's backing temporary file once the
+    array referencing it has been garbage collected.
+    """
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
 
 def _apply_spectral_function(arguments, outcube, function, **kwargs):
     """
@@ -2945,6 +2958,7 @@ class BaseSpectralCube(BaseNDClass, MaskableArrayMixinClass,
                                       use_memmap=True,
                                       parallel=False,
                                       memmap_dir=None,
+                                      backend=None,
                                       update_function=None,
                                       update_size=None,
                                       **kwargs
@@ -2985,6 +2999,18 @@ class BaseSpectralCube(BaseNDClass, MaskableArrayMixinClass,
             of using ``joblib``.
         memmap_dir : str
             The directory to use for memory mapped files.
+        backend : str or None
+            The ``joblib`` ``Parallel`` backend to use.  One of ``None``
+            (joblib's own default, currently ``'loky'``), ``'loky'``,
+            ``'threading'``, or ``'multiprocessing'``.  ``'threading'`` runs
+            workers in the current process, which avoids a
+            platform-dependent issue where the memory-mapped output array
+            cannot be reopened from a separate worker process (see
+            https://github.com/radio-astro-tools/spectral-cube/issues/971),
+            at the cost of being subject to the GIL for any non-releasing
+            code and of being unable to use ``update_function`` (the
+            progress-callback mechanism relies on a custom
+            multiprocessing-only backend).
         update_function : function
             A callback function to call on each iteration of the application.
             It should not accept any arguments.  For example, this can be
@@ -2997,10 +3023,29 @@ class BaseSpectralCube(BaseNDClass, MaskableArrayMixinClass,
             Passed to ``function``
         """
 
+        if backend not in (None, 'loky', 'threading', 'multiprocessing'):
+            raise ValueError("backend must be one of None, 'loky', "
+                             "'threading', or 'multiprocessing'")
+
         if use_memmap:
-            ntf = tempfile.NamedTemporaryFile(dir=memmap_dir)
-            outcube = np.memmap(ntf, mode='w+', shape=self.shape,
+            # Create the backing file, then immediately close our handle to
+            # it and reopen it from disk by path for the memmap.  Keeping
+            # the original NamedTemporaryFile handle open while a *different*
+            # process (e.g. a joblib/loky worker) reopens the same path by
+            # name does not work on Windows (see
+            # https://github.com/radio-astro-tools/spectral-cube/issues/971
+            # and https://github.com/numpy/numpy/issues/3302); closing it
+            # here works identically on all platforms.
+            ntf = tempfile.NamedTemporaryFile(dir=memmap_dir, delete=False)
+            ntf_path = ntf.name
+            ntf.close()
+            outcube = np.memmap(ntf_path, mode='w+', shape=self.shape,
                                 dtype=self._data.dtype)
+            # np.memmap has no __del__-based cleanup of the backing file, so
+            # tie removal of the now-orphaned temporary file to the garbage
+            # collection of the array it backs (this mirrors the automatic
+            # cleanup ``NamedTemporaryFile(delete=True)`` used to provide).
+            weakref.finalize(outcube, _remove_tempfile_if_exists, ntf_path)
         else:
             if self._is_huge and not self.allow_huge_operations:
                 raise ValueError("Applying a function without ``use_memmap`` "
@@ -3071,6 +3116,7 @@ class BaseSpectralCube(BaseNDClass, MaskableArrayMixinClass,
 
                 Parallel(n_jobs=num_cores,
                          verbose=verbose,
+                         backend=backend,
                          max_nbytes=None)(delayed(applicator)(arg, outcube,
                                                               function,
                                                               **kwargs)
@@ -3121,6 +3167,7 @@ class BaseSpectralCube(BaseNDClass, MaskableArrayMixinClass,
                                         verbose=0,
                                         use_memmap=True,
                                         parallel=True,
+                                        backend=None,
                                         **kwargs
                                        ):
         """
@@ -3146,6 +3193,9 @@ class BaseSpectralCube(BaseNDClass, MaskableArrayMixinClass,
         parallel : bool
             If set to ``False``, will force the use of a single core without
             using ``joblib``.
+        backend : str or None
+            The ``joblib`` ``Parallel`` backend to use.  See
+            ``apply_function_parallel_base``.
         kwargs : dict
             Passed to ``function`` and ``apply_function_parallel_base``
         """
@@ -3173,6 +3223,7 @@ class BaseSpectralCube(BaseNDClass, MaskableArrayMixinClass,
                                                   parallel=parallel,
                                                   num_cores=num_cores,
                                                   use_memmap=use_memmap,
+                                                  backend=backend,
                                                   update_size='spatial',
                                                   **kwargs)
 
@@ -3187,6 +3238,7 @@ class BaseSpectralCube(BaseNDClass, MaskableArrayMixinClass,
                                          verbose=0,
                                          use_memmap=True,
                                          parallel=True,
+                                         backend=None,
                                          **kwargs
                                         ):
         """
@@ -3212,6 +3264,9 @@ class BaseSpectralCube(BaseNDClass, MaskableArrayMixinClass,
         parallel : bool
             If set to ``False``, will force the use of a single core without
             using ``joblib``.
+        backend : str or None
+            The ``joblib`` ``Parallel`` backend to use.  See
+            ``apply_function_parallel_base``.
         kwargs : dict
             Passed to ``function``
         """
@@ -3242,6 +3297,7 @@ class BaseSpectralCube(BaseNDClass, MaskableArrayMixinClass,
                                                   parallel=parallel,
                                                   verbose=verbose,
                                                   num_cores=num_cores,
+                                                  backend=backend,
                                                   update_size='spectral',
                                                   **kwargs
                                                  )

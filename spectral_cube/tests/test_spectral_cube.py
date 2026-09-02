@@ -5,6 +5,9 @@ import itertools
 import warnings
 import mmap
 import sys
+import gc
+import platform
+import weakref
 from packaging.version import Version, parse
 
 import pytest
@@ -198,7 +201,7 @@ def test_restore_huge_flag(data_vda_jybeam_lower, use_dask):
 
 
 
-def test_regression_971(data_vda, use_dask):
+def test_regression_971(data_vda, use_dask, joblib_backend):
     """
     Issue 971: ensure joblib does not use huge flag
 
@@ -216,7 +219,8 @@ def test_regression_971(data_vda, use_dask):
 
     convolved = cube.convolve_to(Beam(cube.beam.major * 1.1),
                                     num_cores=2,
-                                    use_memmap=True)
+                                    use_memmap=True,
+                                    backend=joblib_backend)
 
     try:
         # We need to reduce the memory threshold rather than use a large cube to
@@ -228,7 +232,8 @@ def test_regression_971(data_vda, use_dask):
 
         convolved = cube.convolve_to(Beam(cube.beam.major * 1.1),
                                         num_cores=2,
-                                        use_memmap=True)
+                                        use_memmap=True,
+                                        backend=joblib_backend)
 
         assert cube._is_huge
     finally:
@@ -2327,7 +2332,7 @@ def test_convolve_to_equal(data_vda, use_dask):
     convolved = plane.convolve_to(cube.beam, nan_treatment='fill')
 
 
-def test_convolve_to_parallel(data_vda):
+def test_convolve_to_parallel(data_vda, joblib_backend):
 
     pytest.importorskip('joblib')
 
@@ -2338,7 +2343,8 @@ def test_convolve_to_parallel(data_vda):
     for ncores in (1,2,3,4):
         convolved = cube.convolve_to(Beam(cube.beam.major * 1.1),
                                      num_cores=ncores,
-                                     use_memmap=True)
+                                     use_memmap=True,
+                                     backend=joblib_backend)
 
     # No parallel without memmap
     ncores = 2
@@ -2346,6 +2352,48 @@ def test_convolve_to_parallel(data_vda):
             convolved = cube.convolve_to(Beam(cube.beam.major * 1.1),
                                          num_cores=ncores,
                                          use_memmap=False)
+
+
+@pytest.mark.parametrize('backend', ('loky', 'threading'))
+def test_convolve_to_parallel_memmap_tempfile_cleanup(data_vda, backend):
+    """
+    Regression test for the memmap backing-file handling fixed alongside
+    #971: the temporary file created for ``use_memmap=True`` should be
+    removed once the resulting cube's data array is garbage collected,
+    regardless of which joblib backend produced it.
+    """
+
+    pytest.importorskip('joblib')
+
+    if backend == 'loky' and platform.system() == 'Windows':
+        # loky workers reopening the memmap's backing file by path from a
+        # separate process is the failure mode #971 is about; skip until
+        # this has been verified fixed on real Windows CI.
+        pytest.skip("loky backend memmap reopening is not yet verified "
+                    "fixed on Windows")
+
+    from radio_beam import Beam
+
+    cube, data = cube_and_raw(data_vda, use_dask=False)
+
+    convolved = cube.convolve_to(Beam(cube.beam.major * 1.1),
+                                 num_cores=2,
+                                 use_memmap=True,
+                                 backend=backend)
+
+    backing_array = convolved._data
+    assert isinstance(backing_array, np.memmap)
+    backing_path = backing_array.filename
+    assert os.path.exists(backing_path)
+
+    ref = weakref.ref(backing_array)
+    del backing_array
+    del convolved
+    del cube
+    gc.collect()
+
+    assert ref() is None
+    assert not os.path.exists(backing_path)
 
 
 def test_convolve_to(data_vda_beams, use_dask):
@@ -2903,6 +2951,14 @@ def test_parallel_bad_params(data_adv):
     assert ("parallel=True was specified but num_cores=1. "
             "Joblib will be used to run the task with a "
             "single thread.") in str(wrn[-1].message)
+
+    with pytest.raises(ValueError,
+                       match=("backend must be one of None, 'loky', "
+                              "'threading', or 'multiprocessing'")):
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore', AstropyWarning)
+            cube.spectral_smooth_median(3, num_cores=1, parallel=True,
+                                        backend='bogus')
 
 
 def test_initialization_from_units(data_adv, use_dask):
