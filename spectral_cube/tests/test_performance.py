@@ -74,7 +74,6 @@ def test_pix_cen():
     assert find_base_nbytes(x) == sc.shape[1]*sc.shape[2]*bytes_per_pix
 
 
-# @pytest.mark.skipif('True')
 def test_parallel_performance_smoothing():
 
     """
@@ -131,7 +130,6 @@ def test_parallel_performance_smoothing():
             print(rslt)
 
 
-# @pytest.mark.skipif('True')
 def test_parallel_performance_spatial_smoothing():
     """
     Test parallel performance of spectral_smooth by timing different
