@@ -5,13 +5,11 @@ A class to represent a 3-d position-position-velocity spectral cube.
 import warnings
 from functools import wraps
 import operator
-import os
 import re
 import itertools
 import copy
 import tempfile
 import textwrap
-import time
 import weakref
 from pathlib import PosixPath
 import dask.array as da
@@ -155,28 +153,6 @@ def parallel_docstring(func):
         wrapper.__doc__ = textwrap.dedent(wrapper.__doc__) + _PARALLEL_DOC
 
     return wrapper
-
-def _remove_tempfile_if_exists(path, attempts=5, delay=0.1):
-    """
-    Best-effort removal of a memmap's backing temporary file once the
-    array referencing it has been garbage collected.
-
-    On Windows, the OS can briefly hold on to a just-unmapped file even
-    after the owning Python object (and its memory mapping) has already
-    been deallocated, so an immediate ``os.remove`` can transiently fail
-    with a ``PermissionError``; retry a few times before giving up.
-    """
-    for attempt in range(attempts):
-        try:
-            os.remove(path)
-            return
-        except FileNotFoundError:
-            return
-        except OSError:
-            if attempt == attempts - 1:
-                return
-            time.sleep(delay)
-
 
 def _apply_spectral_function(arguments, outcube, function, **kwargs):
     """
@@ -3074,7 +3050,7 @@ class BaseSpectralCube(BaseNDClass, MaskableArrayMixinClass,
             # tie removal of the now-orphaned temporary file to the garbage
             # collection of the array it backs (this mirrors the automatic
             # cleanup ``NamedTemporaryFile(delete=True)`` used to provide).
-            weakref.finalize(outcube, _remove_tempfile_if_exists, ntf_path)
+            weakref.finalize(outcube, cube_utils.remove_tempfile_if_exists, ntf_path)
         else:
             if self._is_huge and not self.allow_huge_operations:
                 raise ValueError("Applying a function without ``use_memmap`` "
@@ -3702,10 +3678,17 @@ class BaseSpectralCube(BaseNDClass, MaskableArrayMixinClass,
             view_newaxis[axis] = None
             view_newaxis = tuple(view_newaxis)
 
-            ntf = tempfile.NamedTemporaryFile()
-            dsarr = np.memmap(ntf, mode='w+', shape=newshape, dtype=float)
-            ntf2 = tempfile.NamedTemporaryFile()
-            mask = np.memmap(ntf2, mode='w+', shape=newshape, dtype=bool)
+            ntf = tempfile.NamedTemporaryFile(delete=False)
+            ntf_path = ntf.name
+            ntf.close()
+            dsarr = np.memmap(ntf_path, mode='w+', shape=newshape, dtype=float)
+            weakref.finalize(dsarr, cube_utils.remove_tempfile_if_exists, ntf_path)
+
+            ntf2 = tempfile.NamedTemporaryFile(delete=False)
+            ntf2_path = ntf2.name
+            ntf2.close()
+            mask = np.memmap(ntf2_path, mode='w+', shape=newshape, dtype=bool)
+            weakref.finalize(mask, cube_utils.remove_tempfile_if_exists, ntf2_path)
             for ii in range(newshape[axis]):
                 view_fulldata = makeslice_local(ii*factor)
                 view_newdata = makeslice_local(ii, nsteps=1)
