@@ -3036,6 +3036,20 @@ class BaseSpectralCube(BaseNDClass, MaskableArrayMixinClass,
             code and of being unable to use ``update_function`` (the
             progress-callback mechanism relies on a custom
             multiprocessing-only backend).
+
+        .. warning::
+            On Windows with Python 3.11, ``numpy`` is capped at the 2.4.x
+            series (``numpy`` dropped Python 3.11 support at 2.5.0), and
+            that series' ``np.memmap`` does not release the OS-level
+            handle on its backing file as promptly as ``numpy>=2.5`` does
+            once the array is garbage collected.  This does not appear to
+            cause incorrect results, but cleanup of the ``use_memmap=True``
+            temporary file may be delayed on that specific platform/version
+            combination regardless of ``backend``.  See
+            ``test_convolve_to_parallel_memmap_tempfile_cleanup``.  This is
+            expected to become moot (and this warning removable) once this
+            project drops Python 3.11, matching astropy's own minimum
+            supported version.
         """
 
         if backend not in (None, 'loky', 'threading', 'multiprocessing'):
