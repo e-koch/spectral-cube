@@ -3000,17 +3000,7 @@ class BaseSpectralCube(BaseNDClass, MaskableArrayMixinClass,
         memmap_dir : str
             The directory to use for memory mapped files.
         backend : str or None
-            The ``joblib`` ``Parallel`` backend to use.  One of ``None``
-            (joblib's own default, currently ``'loky'``), ``'loky'``,
-            ``'threading'``, or ``'multiprocessing'``.  ``'threading'`` runs
-            workers in the current process, which avoids a
-            platform-dependent issue where the memory-mapped output array
-            cannot be reopened from a separate worker process (see
-            https://github.com/radio-astro-tools/spectral-cube/issues/971),
-            at the cost of being subject to the GIL for any non-releasing
-            code and of being unable to use ``update_function`` (the
-            progress-callback mechanism relies on a custom
-            multiprocessing-only backend).
+            The ``joblib`` ``Parallel`` backend to use.
         update_function : function
             A callback function to call on each iteration of the application.
             It should not accept any arguments.  For example, this can be
@@ -3021,6 +3011,19 @@ class BaseSpectralCube(BaseNDClass, MaskableArrayMixinClass,
             If 'spectral', defaults to ``self.shape[1]*self.shape[2]``.
         kwargs : dict
             Passed to ``function``
+
+        .. note::
+            ``backend`` must be one of ``None`` (joblib's own default,
+            currently ``'loky'``), ``'loky'``, ``'threading'``, or
+            ``'multiprocessing'``.  ``'threading'`` runs workers in the
+            current process, which avoids a platform-dependent issue where
+            the memory-mapped output array cannot be reopened from a
+            separate worker process (see
+            https://github.com/radio-astro-tools/spectral-cube/issues/971),
+            at the cost of being subject to the GIL for any non-releasing
+            code and of being unable to use ``update_function`` (the
+            progress-callback mechanism relies on a custom
+            multiprocessing-only backend).
         """
 
         if backend not in (None, 'loky', 'threading', 'multiprocessing'):
